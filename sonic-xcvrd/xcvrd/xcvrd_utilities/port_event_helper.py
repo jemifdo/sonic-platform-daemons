@@ -250,7 +250,11 @@ class PortMapping:
 
     def get_physical_to_logical(self, physical_port: int):
         assert isinstance(physical_port, int), "{} is NOT integer".format(physical_port)
-        return self.physical_to_logical.get(physical_port)
+        logical_port_list = self.physical_to_logical.get(physical_port)
+        if logical_port_list:
+            # Sorting based on the number in port_name eg: 128 in Ethernet128
+            logical_port_list.sort(key=lambda intf: int(intf[8:]))
+        return logical_port_list
 
     def logical_port_name_to_physical_port_list(self, port_name):
         try:
