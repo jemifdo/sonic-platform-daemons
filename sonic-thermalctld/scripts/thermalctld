@@ -149,6 +149,29 @@ class FanStatus(logger.Logger):
         self.over_speed = is_over_speed
         return old_status != self.over_speed
 
+    def set_direction_mismatch(self, chassis_direction, fan_direction):
+        """
+        Set and cache Fan presence status
+        :param chassis_direction: Chassis airflow direction
+        :param fan_direction: Fan airflow direction
+        :return: True if status changed else False
+        """
+        mismatch = True
+
+        if chassis_direction == NOT_AVAILABLE or\
+            fan_direction == NOT_AVAILABLE:
+            # Unable to arrive mismatch airflow condition
+            return False
+
+        if chassis_direction.lower() == fan_direction.lower():
+            mismatch = False
+
+        if mismatch == self.invalid_direction:
+            return False
+
+        self.invalid_direction = mismatch
+        return True
+
     def is_ok(self):
         """
         Indicate the Fan works as expect
@@ -183,6 +206,8 @@ class FanUpdater(logger.Logger):
         self.table = swsscommon.Table(state_db, FanUpdater.FAN_INFO_TABLE_NAME)
         self.drawer_table = swsscommon.Table(state_db, FanUpdater.FAN_DRAWER_INFO_TABLE_NAME)
         self.phy_entity_table = swsscommon.Table(state_db, PHYSICAL_ENTITY_INFO_TABLE)
+        self.chassis_direction = try_get(self.chassis.get_airflow_direction,\
+                                         self.chassis.AIRFLOW_NOT_APPLICABLE)
 
     def __del__(self):
         if self.table:
@@ -223,7 +248,6 @@ class FanUpdater(logger.Logger):
         for drawer_index, drawer in enumerate(self.chassis.get_all_fan_drawers()):
             if self.task_stopping_event.is_set():
                 return
-            self._refresh_fan_drawer_status(drawer, drawer_index)
             for fan_index, fan in enumerate(drawer.get_all_fans()):
                 if self.task_stopping_event.is_set():
                     return
@@ -231,6 +255,7 @@ class FanUpdater(logger.Logger):
                     self._refresh_fan_status(drawer, drawer_index, fan, fan_index)
                 except Exception as e:
                     self.log_warning('Failed to update fan status - {}'.format(repr(e)))
+            self._refresh_fan_drawer_status(drawer, drawer_index)
 
         for psu_index, psu in enumerate(self.chassis.get_all_psus()):
             for fan_index, fan in enumerate(psu.get_all_fans()):
@@ -257,6 +282,20 @@ class FanUpdater(logger.Logger):
         drawer_name = try_get(fan_drawer.get_name)
         if drawer_name == NOT_AVAILABLE:
             return
+
+        fan_drawer_status = True
+        tmp_fan = None
+        for fan_index, fan in enumerate(fan_drawer.get_all_fans()):
+            tmp_fan = fan
+            fan_name = try_get(fan.get_name, '{} fan {}'.format(drawer_name, fan_index + 1))
+            if not self.fan_status_dict[fan_name].is_ok():
+                fan_drawer_status = False
+                break
+
+        if fan_drawer_status:
+            fan_drawer.set_status_led(tmp_fan.STATUS_LED_COLOR_GREEN)
+        else:
+            fan_drawer.set_status_led(tmp_fan.STATUS_LED_COLOR_RED)
 
         update_entity_info(self.phy_entity_table, CHASSIS_INFO_KEY, drawer_name, fan_drawer, drawer_index)
 
@@ -340,10 +379,20 @@ class FanUpdater(logger.Logger):
                                         format(fan_name, speed, speed_target)
                                         )
 
+        if presence and fan_status.set_direction_mismatch(self.chassis_direction, fan_direction):
+            set_led = True
+            self._log_on_status_changed(not fan_status.invalid_direction,
+                                        'Fan direction mismatch warning cleared: {} is back to normal'.format(fan_name),
+                                        'Fan direction mismatch warning: {} direction is {} but chassis is {} airflow'\
+                                            .format(fan_name, fan_direction, self.chassis_direction)
+                                        )
+
+        # TODO: handle invalid fan direction
+
         # We don't set PSU led here, PSU led will be handled in psud
         if set_led:
             if not is_psu_fan:
-                self._set_fan_led(parent, fan, fan_name, fan_status)
+                self._set_fan_led(parent, fan, fan_name, presence, fan_status)
 
         if fan_fault_status != NOT_AVAILABLE:
             fan_fault_status = fan_status.is_ok()
@@ -365,7 +414,7 @@ class FanUpdater(logger.Logger):
 
         self.table.set(fan_name, fvs)
 
-    def _set_fan_led(self, fan_drawer, fan, fan_name, fan_status):
+    def _set_fan_led(self, fan_drawer, fan, fan_name, fan_presence, fan_status):
         """
         Set fan led according to current status
         :param fan_drawer: Object representing a platform Fan drawer or PSU
@@ -375,9 +424,11 @@ class FanUpdater(logger.Logger):
         :return:
         """
         try:
-            led_color = fan.STATUS_LED_COLOR_GREEN if fan_status.is_ok() else fan.STATUS_LED_COLOR_RED
+            if fan_presence:
+                led_color = fan.STATUS_LED_COLOR_GREEN if fan_status.is_ok() else fan.STATUS_LED_COLOR_RED
+            else:
+                led_color = fan.STATUS_LED_COLOR_OFF
             fan.set_status_led(led_color)
-            fan_drawer.set_status_led(led_color)
         except NotImplementedError as e:
             self.log_warning('Failed to set status LED for fan {}, set_status_led not implemented'.format(fan_name))
 
