@@ -163,7 +163,7 @@ class TestFanUpdater(object):
         mock_fan.set_status_led = mock.MagicMock(side_effect=NotImplementedError)
 
         fan_updater = thermalctld.FanUpdater(MockChassis(), multiprocessing.Event())
-        fan_updater._set_fan_led(mock_fan_drawer, mock_fan, 'Test Fan', fan_status)
+        fan_updater._set_fan_led(mock_fan_drawer, mock_fan, 'Test Fan', True, fan_status)
         assert fan_updater.log_warning.call_count == 1
         fan_updater.log_warning.assert_called_with('Failed to set status LED for fan Test Fan, set_status_led not implemented')
 
@@ -173,7 +173,7 @@ class TestFanUpdater(object):
         fan_updater = thermalctld.FanUpdater(chassis, multiprocessing.Event())
         fan_updater.update()
         fan_list = chassis.get_all_fans()
-        assert fan_list[0].get_status_led() == MockFan.STATUS_LED_COLOR_RED
+        assert fan_list[0].get_status_led() == MockFan.STATUS_LED_COLOR_OFF
         assert fan_updater.log_warning.call_count == 2
         expected_calls = [
             mock.call('Fan removed warning: FanDrawer 0 fan 1 was removed from the system, potential overheat hazard'),
