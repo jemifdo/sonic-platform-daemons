@@ -645,6 +645,7 @@ class TestXcvrdScript(object):
         mock_chassis.get_sfp = MagicMock(return_value=mock_sfp)
         mock_api = MagicMock()
         mock_sfp.get_xcvr_api = MagicMock(return_value=mock_api)
+        mock_sfp.get_platform_media_key = MagicMock(side_effect=NotImplementedError)
         mock_is_cmis_api.return_value = False
 
         xcvr_info_dict = {
